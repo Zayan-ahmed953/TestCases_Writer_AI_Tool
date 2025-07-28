@@ -5,6 +5,7 @@ Automatically generate comprehensive pytest test cases for your Python applicati
 ## Features
 
 - Scans your Python project and sends code to Claude AI to generate high-quality pytest test cases.
+- **Smart caching**: Only makes API calls when your code has actually changed, saving costs and time.
 - Writes the generated tests to a `tests/` directory in your project.
 - Ensures test files are import-safe by patching `sys.path`.
 - Supports file-based storage patching for isolated tests (see advanced usage).
@@ -66,9 +67,11 @@ Automatically generate comprehensive pytest test cases for your Python applicati
 ## How It Works
 
 - The tool collects all Python files in your app.
+- **Smart caching**: Before making API calls, it checks if any files have changed since the last run by comparing file hashes and modification times. If no changes are detected, it skips the API call to save costs.
 - It sends the code to Claude AI with a prompt to generate pytest-style tests.
 - The generated tests are written to `tests/test_generated.py` (or one test file per source file).
 - Each test file includes a snippet to patch `sys.path` for import safety.
+- A `.test_generator_cache` file is created in your app directory to track file changes.
 
 ---
 
@@ -98,6 +101,8 @@ def temp_tasks_file(tmp_path, monkeypatch):
   Ensure your `ANTHROPIC_API_KEY` is set and valid.
 - **No tests generated:**  
   Check that your app directory contains `.py` files and is accessible.
+- **Tool says "no changes detected" but you want to regenerate:**  
+  Delete the `.test_generator_cache` file in your app directory and run the tool again.
 
 ---
 

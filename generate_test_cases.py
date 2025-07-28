@@ -5,6 +5,9 @@ import glob
 import requests
 import json
 import pytest
+import hashlib
+import pickle
+from pathlib import Path
 
 API_KEY = os.getenv('ANTHROPIC_API_KEY')
 CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages'
@@ -23,8 +26,89 @@ PYTHONPATH_FIX = (
     "sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))\n"
 )
 
+def get_file_hash(file_path):
+    """Generate a hash of file content and modification time."""
+    try:
+        stat = os.stat(file_path)
+        with open(file_path, 'rb') as f:
+            content = f.read()
+        # Combine content hash with modification time
+        content_hash = hashlib.md5(content).hexdigest()
+        return f"{content_hash}_{stat.st_mtime}"
+    except (OSError, IOError):
+        return None
+
+def get_cache_file_path(app_path):
+    """Get the path to the cache file for storing file hashes."""
+    return os.path.join(app_path, '.test_generator_cache')
+
+def load_file_cache(app_path):
+    """Load the cached file hashes."""
+    cache_file = get_cache_file_path(app_path)
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, 'rb') as f:
+                return pickle.load(f)
+        except (pickle.PickleError, EOFError):
+            return {}
+    return {}
+
+def save_file_cache(app_path, file_hashes):
+    """Save the file hashes to cache."""
+    cache_file = get_cache_file_path(app_path)
+    try:
+        with open(cache_file, 'wb') as f:
+            pickle.dump(file_hashes, f)
+    except (OSError, IOError) as e:
+        print(f"Warning: Could not save cache file: {e}")
+
+def check_files_changed(app_path):
+    """Check if any Python files have changed since last run."""
+    py_files = get_python_files(app_path)
+    if not py_files:
+        return True, []  # No files found, consider as changed
+    
+    cached_hashes = load_file_cache(app_path)
+    current_hashes = {}
+    changed_files = []
+    
+    for file_path in py_files:
+        current_hash = get_file_hash(file_path)
+        if current_hash is None:
+            continue
+            
+        current_hashes[file_path] = current_hash
+        
+        # Check if file is new or has changed
+        if file_path not in cached_hashes or cached_hashes[file_path] != current_hash:
+            changed_files.append(file_path)
+    
+    # Check for deleted files
+    for cached_file in cached_hashes:
+        if cached_file not in current_hashes and os.path.exists(cached_file):
+            changed_files.append(cached_file)
+    
+    # Save current hashes for next run
+    save_file_cache(app_path, current_hashes)
+    
+    return len(changed_files) > 0, changed_files
+
 def get_python_files(app_path):
-    return [y for x in os.walk(app_path) for y in glob.glob(os.path.join(x[0], '*.py'))]
+    """Get all Python files in the app directory, excluding tests directory and generated test files."""
+    all_py_files = [y for x in os.walk(app_path) for y in glob.glob(os.path.join(x[0], '*.py'))]
+    
+    # Filter out files in tests directory and generated test files
+    filtered_files = []
+    for file_path in all_py_files:
+        # Skip files in tests directory
+        if 'tests' in file_path.split(os.sep):
+            continue
+        # Skip generated test files (files starting with test_)
+        if os.path.basename(file_path).startswith('test_'):
+            continue
+        filtered_files.append(file_path)
+    
+    return filtered_files
 
 def read_files(file_paths):
     code = ''
@@ -110,6 +194,21 @@ def main():
     if not os.path.isdir(app_path):
         print(f'Error: {app_path} is not a directory')
         sys.exit(1)
+    
+    # Check if any files have changed
+    files_changed, changed_files = check_files_changed(app_path)
+    
+    if not files_changed:
+        print("✅ No changes detected in your code. Skipping API call to save costs.")
+        print("If you want to regenerate tests anyway, delete the .test_generator_cache file and run again.")
+        return
+    
+    if changed_files:
+        print(f"📝 Detected changes in {len(changed_files)} file(s):")
+        for file_path in changed_files:
+            print(f"   - {os.path.relpath(file_path, app_path)}")
+        print()
+    
     py_files = get_python_files(app_path)
     if not py_files:
         print('No Python files found in the specified directory.')

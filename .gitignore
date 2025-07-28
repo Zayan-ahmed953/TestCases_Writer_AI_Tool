@@ -7,3 +7,5 @@ terraformreviewer/__pycache__/
 PROJECT_DESCRIPTION.md
 pyproject.toml
 setup.cfg
+# Test generator cache files
+.test_generator_cache
